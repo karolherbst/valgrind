@@ -64,6 +64,7 @@ static UInt mmt_current_item = 1;
 int mmt_trace_all_opens = False;
 char *mmt_trace_files[MMT_MAX_TRACE_FILES];
 int mmt_trace_files_num = 0;
+fd_set uvm_trace_fds;
 fd_set trace_fds;
 
 int mmt_trace_all_files = False;
@@ -627,7 +628,7 @@ void mmt_pre_syscall(ThreadId tid, UInt syscallno, UWord *args, UInt nArgs)
 
 		if (FD_ISSET(fd, &trace_fds) && (mmt_trace_nvidia_ioctls ||
 				mmt_trace_nouveau_ioctls || mmt_trace_fglrx_ioctls))
-			if (mmt_nv_ioctl_pre(args) == 0 &&
+			if (mmt_nv_ioctl_pre(args, FD_ISSET(fd, &uvm_trace_fds)) == 0 &&
 					mmt_nouveau_ioctl_pre(args) == 0 &&
 					mmt_fglrx_ioctl_pre(args) == 0)
 			{
@@ -684,6 +685,8 @@ static void post_open(ThreadId tid, UWord *args, UInt nArgs, SysRes res)
 
 		if (mmt_trace_files_num == 0)
 		{
+			if (mmt_trace_nvidia_ioctls && VG_(strncmp)(path, "/dev/nvidia-uvm", 15) == 0)
+				FD_SET(res._val, &uvm_trace_fds);
 			if (mmt_trace_nvidia_ioctls && VG_(strncmp)(path, "/dev/nvidia", 11) == 0)
 				FD_SET(res._val, &trace_fds);
 			else if (mmt_trace_fglrx_ioctls && VG_(strncmp)(path, "/dev/ati/", 9) == 0)
@@ -702,6 +705,8 @@ static void post_close(ThreadId tid, UWord *args, UInt nArgs, SysRes res)
 
 	if (FD_ISSET(fd, &trace_fds))
 		FD_CLR(fd, &trace_fds);
+	if (FD_ISSET(fd, &uvm_trace_fds))
+		FD_CLR(fd, &uvm_trace_fds);
 }
 
 struct mmt_mmap_data *mmt_map_region(int fd, Addr start, Addr end, Off64T offset, int prot, int flags)
@@ -825,7 +830,7 @@ void mmt_post_syscall(ThreadId tid, UInt syscallno, UWord *args,
 
 		if (FD_ISSET(fd, &trace_fds) && (mmt_trace_nvidia_ioctls ||
 				mmt_trace_nouveau_ioctls || mmt_trace_fglrx_ioctls))
-			if (mmt_nv_ioctl_post(args, res) == 0 &&
+			if (mmt_nv_ioctl_post(args, res, FD_ISSET(fd, &uvm_trace_fds)) == 0 &&
 					mmt_nouveau_ioctl_post(args, res) == 0 &&
 					mmt_fglrx_ioctl_post(args, res) == 0)
 			{

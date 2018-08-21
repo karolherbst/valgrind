@@ -27,6 +27,7 @@
 #include "coregrind/pub_core_syscall.h"
 #include "coregrind/pub_core_aspacemgr.h"
 #include "nvrm_ioctl.h"
+#include "nvuvm_ioctl.h"
 #include "nvrm_mthd.h"
 #include "nvrm_query.h"
 
@@ -113,7 +114,8 @@ struct nv_object_type mmt_nv_object_types[] =
 	{0x827d, 8},
 	{0x857d, 8},
 
-	{0x0080, 8}, // 10 on maxwell/340.32, TODO
+	{0x0080, 14}, // 10 on maxwell/340.32, TODO
+	             // 14 on pascal/390.77
 	{0x2080, 1},
 
 	{0x3089, 4},
@@ -134,11 +136,13 @@ struct nv_object_type mmt_nv_object_types[] =
 	{0x85b5, 2},
 	{0x90b5, 2},
 	{0xb0b5, 2},
+	{0xc0b5, 2},
 	{0xc1b5, 2},
 
 	{0x83de, 3},
 
 	{0x00f1, 6},
+	{0x90f1, 12},
 
 	{-1, 0},
 	{-1, 0},
@@ -404,9 +408,9 @@ static SysRes inject_ioctl_call(int fd, uint32_t cid, uint32_t handle, uint32_t 
 	call.size = size;
 	UWord ioctlargs[3] = { fd, (UWord)NVRM_IOCTL_CALL, (UWord)&call };
 
-	mmt_nv_ioctl_pre(ioctlargs);
+	mmt_nv_ioctl_pre(ioctlargs, false);
 	SysRes ioctlres = VG_(do_syscall3)(__NR_ioctl, fd, (UWord)NVRM_IOCTL_CALL, (UWord)&call);
-	mmt_nv_ioctl_post(ioctlargs, ioctlres);
+	mmt_nv_ioctl_post(ioctlargs, ioctlres, false);
 	return ioctlres;
 }
 
@@ -451,9 +455,9 @@ static void mess_with_ioctl_create(int fd, UInt *data)
 		UWord args[3] = { fd, (UWord)NVRM_IOCTL_CREATE, (UWord)&create };
 
 		in_fuzzer_mode = 1;
-		mmt_nv_ioctl_pre(args);
+		mmt_nv_ioctl_pre(args, false);
 		res = VG_(do_syscall3)(__NR_ioctl, args[0], args[1], args[2]);
-		mmt_nv_ioctl_post(args, res);
+		mmt_nv_ioctl_post(args, res, false);
 		in_fuzzer_mode = 0;
 		err = (sr_isError(res) || create.status != NVRM_STATUS_SUCCESS) ? 1 : 0;
 	}
@@ -477,9 +481,9 @@ static void mess_with_ioctl_create(int fd, UInt *data)
 		UWord args[3] = { fd, (UWord)NVRM_IOCTL_DESTROY, (UWord)&destroy };
 
 		in_fuzzer_mode = 1;
-		mmt_nv_ioctl_pre(args);
+		mmt_nv_ioctl_pre(args, false);
 		res = VG_(do_syscall3)(__NR_ioctl, args[0], args[1], args[2]);
-		mmt_nv_ioctl_post(args, res);
+		mmt_nv_ioctl_post(args, res, false);
 		in_fuzzer_mode = 0;
 
 	}
@@ -491,7 +495,7 @@ static void mess_with_ioctl_create(int fd, UInt *data)
 	}
 }
 
-int mmt_nv_ioctl_pre(UWord *args)
+int mmt_nv_ioctl_pre(UWord *args, bool uvm)
 {
 	int fd = args[0];
 	UInt id = args[1];
@@ -502,7 +506,9 @@ int mmt_nv_ioctl_pre(UWord *args)
 		return 0;
 	if (!data)
 		return 0;
-	if ((id & 0x0000FF00) != 0x4600)
+	if (!uvm && (id & 0x0000FF00) != 0x4600)
+		return 0;
+	if (uvm && (id & 0x0000FFFF) > 0x7ff)
 		return 0;
 
 	if (mmt_trace_marks)
@@ -520,7 +526,10 @@ int mmt_nv_ioctl_pre(UWord *args)
 	if (id == NVRM_IOCTL_CREATE && mmt_ioctl_create_fuzzer)
 		mess_with_ioctl_create(fd, data);
 
-	size = (id & 0x3FFF0000) >> 16;
+	if (!uvm)
+		size = (id & 0x3FFF0000) >> 16;
+	else
+		size = nvuvm_sizeof_ioctl(id);
 
 	mmt_bin_write_1('i');
 	mmt_bin_write_4(fd);
@@ -528,7 +537,7 @@ int mmt_nv_ioctl_pre(UWord *args)
 	mmt_bin_write_buffer((UChar *)data, size);
 	mmt_bin_end();
 
-	switch (id)
+	if (!uvm) switch (id)
 	{
 		case NVRM_IOCTL_CREATE_DEV_OBJ:
 		{
@@ -639,7 +648,7 @@ static void inject_get_chipset(int fd, struct nvrm_ioctl_create *s)
 			NVRM_MTHD_SUBDEVICE_GET_CHIPSET, &chip, sizeof(chip));
 }
 
-int mmt_nv_ioctl_post(UWord *args, SysRes res)
+int mmt_nv_ioctl_post(UWord *args, SysRes res, bool uvm)
 {
 	int fd = args[0];
 	UInt id = args[1];
@@ -650,7 +659,9 @@ int mmt_nv_ioctl_post(UWord *args, SysRes res)
 		return 0;
 	if (!data)
 		return 0;
-	if ((id & 0x0000FF00) != 0x4600)
+	if (!uvm && (id & 0x0000FF00) != 0x4600)
+		return 0;
+	if (uvm && (id & 0x0000FFFF) > 0x7ff)
 		return 0;
 
 	if (mmt_trace_marks)
@@ -679,7 +690,10 @@ int mmt_nv_ioctl_post(UWord *args, SysRes res)
 		}
 	}
 
-	size = (id & 0x3FFF0000) >> 16;
+	if (!uvm)
+		size = (id & 0x3FFF0000) >> 16;
+	else
+		size = nvuvm_sizeof_ioctl(id);
 
 	mmt_bin_write_1('j');
 	mmt_bin_write_4(fd);

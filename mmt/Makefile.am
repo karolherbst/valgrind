@@ -6,10 +6,11 @@ noinst_PROGRAMS += mmt-@VGCONF_ARCH_SEC@-@VGCONF_OS@
 endif
 
 # _FORTIFY_SOURCE enables some checks which depend on glibc for linking
-CFLAGS += -U_FORTIFY_SOURCE
+CFLAGS += -U_FORTIFY_SOURCE -I/etc/sysconfig/nvidia/NVIDIA-Linux-x86_64-390.77/kernel/nvidia-uvm -I/etc/sysconfig/nvidia/NVIDIA-Linux-x86_64-390.77/kernel/common/inc/
 
 MMT_SOURCES_COMMON = mmt_main.c mmt_nv_ioctl.c mmt_instrument.c mmt_trace.c \
-			mmt_nouveau_ioctl.c mmt_trace_bin.c mmt_fglrx_ioctl.c
+			mmt_nouveau_ioctl.c mmt_trace_bin.c mmt_fglrx_ioctl.c \
+			nvuvm_ioctl.h
 
 mmt_@VGCONF_ARCH_PRI@_@VGCONF_OS@_SOURCES      = \
 	$(MMT_SOURCES_COMMON)
